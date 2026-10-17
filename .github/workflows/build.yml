@@ -1,18 +1,17 @@
-name: Build
+name: "Build"
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
-    branches: [main]
-
-permissions:
-  contents: write
+    branches-ignore:
+      - main
 
 jobs:
   build:
-    name: Build plugin
+    name: Build Plugins
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -25,33 +24,18 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
 
       - name: Build
         run: |
+          cd $GITHUB_WORKSPACE
           chmod +x ./gradlew
-          set -o pipefail
-          ./gradlew make --stacktrace 2>&1 | tee build.log
+          ./gradlew make
 
-      - name: Publish build log and zip to the builds branch
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p out
-          cp build.log out/ 2>/dev/null || true
-          cp plugins/*/build/outputs/*.zip out/ 2>/dev/null || true
-          cd out
-          git init -q -b builds
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add -A
-          git commit -q -m "Build ${GITHUB_SHA}"
-          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds
-
-      - name: Publish release
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete latest -y --cleanup-tag || true
-          gh release create latest out/*.zip --title "Latest build" --notes "Built from commit ${GITHUB_SHA}"
+      - name: Upload plugin artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugins
+          if-no-files-found: error
+          path: ${{ github.workspace }}/plugins/**/build/outputs/*.zip

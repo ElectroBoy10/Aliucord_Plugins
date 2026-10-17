@@ -17,7 +17,7 @@ subprojects {
     }
 
     configure<LibraryExtension> {
-        namespace = "com.multirolefilter"
+        // namespace is set in each plugin's own build.gradle.kts
         compileSdk = 36
 
         defaultConfig {
