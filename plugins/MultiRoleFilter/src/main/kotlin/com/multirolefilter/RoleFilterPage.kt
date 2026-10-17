@@ -123,7 +123,7 @@ class RoleFilterPage(
             setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
             setOnClickListener { loadMissingProfiles() }
         }
-        addView(profilesButton!!, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
+        linearLayout.addView(profilesButton!!, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
 
         listContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         addView(listContainer!!)
