@@ -1,5 +1,5 @@
 version = "1.0.1"
-description = "Translate messages from the message menu or automatically in the chats you pick, and reply in the other person's language. Based on TranslateMessages by yutaplug; modified by ElectroBoy10 with Claude Code."
+description = "Translate messages from the message menu or automatically in the chats you pick, and reply in the other person's language. Based on TranslateMessages by yutaplug; modified with Claude Code."
 
 aliucord {
     changelog.set(

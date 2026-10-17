@@ -1,4 +1,4 @@
-package com.github.electroboy10.translatemessagesplus
+package com.translatemessagesplus
 
 /** Colours for the "(translated DE → EN)" tag. A null colour means Discord's muted text colour. */
 object TagColors {

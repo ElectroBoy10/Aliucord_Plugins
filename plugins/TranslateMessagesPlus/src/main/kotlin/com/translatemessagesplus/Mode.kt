@@ -1,4 +1,4 @@
-package com.github.electroboy10.translatemessagesplus
+package com.translatemessagesplus
 
 /** Which messages of a chat get translated automatically. */
 enum class Mode(val id: String, val label: String) {

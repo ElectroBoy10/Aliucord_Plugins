@@ -1,4 +1,4 @@
-package com.github.electroboy10.translatemessagesplus
+package com.translatemessagesplus
 
 import java.util.Locale
 

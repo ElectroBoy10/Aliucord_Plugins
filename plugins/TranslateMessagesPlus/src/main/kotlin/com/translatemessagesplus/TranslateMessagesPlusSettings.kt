@@ -1,4 +1,4 @@
-package com.github.electroboy10.translatemessagesplus
+package com.translatemessagesplus
 
 import android.content.Intent
 import android.net.Uri
@@ -75,7 +75,7 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
             "TranslateMessagesPlus is based on TranslateMessages 1.0.2 by yutaplug. Most of the translation engine, " +
                 "the Google, DeepL and LibreTranslate support, the language list, the /translate command and the " +
                 "settings layout come from that original plugin.\n\n" +
-                "Added by ElectroBoy10, with the code written by Claude (Anthropic) using Claude Code: per-chat " +
+                "Added in this version, with the code written by Claude (Anthropic) using Claude Code: per-chat " +
                 "auto-translate, translated replies, the tag colour and the channel settings entries.",
         )
         action("Original plugin by yutaplug", "github.com/yutaplug/yutaplugins") {
