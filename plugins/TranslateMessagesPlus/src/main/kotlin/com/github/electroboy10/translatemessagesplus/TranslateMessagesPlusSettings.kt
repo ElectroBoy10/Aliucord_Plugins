@@ -1,5 +1,7 @@
 package com.github.electroboy10.translatemessagesplus
 
+import android.content.Intent
+import android.net.Uri
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -65,6 +67,31 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
         serviceOptions = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
         add(serviceOptions!!)
         showServiceOptions()
+
+        divider()
+        section("About")
+        note(
+            linearLayout,
+            "TranslateMessagesPlus is based on TranslateMessages 1.0.2 by yutaplug. Most of the translation engine, " +
+                "the Google, DeepL and LibreTranslate support, the language list, the /translate command and the " +
+                "settings layout come from that original plugin.\n\n" +
+                "Added by ElectroBoy10, with the code written by Claude (Anthropic) using Claude Code: per-chat " +
+                "auto-translate, translated replies, the tag colour and the channel settings entries.",
+        )
+        action("Original plugin by yutaplug", "github.com/yutaplug/yutaplugins") {
+            openUrl("https://github.com/yutaplug/yutaplugins")
+        }
+        action("This plugin's source", "github.com/ElectroBoy10/Claude") {
+            openUrl("https://github.com/ElectroBoy10/Claude")
+        }
+    }
+
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Throwable) {
+            Utils.showToast("Couldn't open the link")
+        }
     }
 
     /** Lists the chats that have their own setting. Tap one to change or remove it. */
