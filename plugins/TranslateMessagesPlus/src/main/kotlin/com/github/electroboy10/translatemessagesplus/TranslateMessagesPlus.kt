@@ -1,6 +1,7 @@
 package com.github.electroboy10.translatemessagesplus
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.text.InputType
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -13,6 +14,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.core.widget.TextViewCompat
+import androidx.fragment.app.Fragment
 import com.aliucord.Http
 import com.aliucord.Utils
 import com.aliucord.annotations.AliucordPlugin
@@ -30,10 +32,12 @@ import com.discord.stores.StoreStream
 import com.discord.utilities.color.ColorCompat
 import com.discord.utilities.view.text.SimpleDraweeSpanTextView
 import com.discord.widgets.channels.list.WidgetChannelsListItemChannelActions
+import com.discord.widgets.channels.settings.WidgetTextChannelSettings
 import com.discord.widgets.chat.list.actions.WidgetChatListActions
 import com.discord.widgets.chat.list.adapter.WidgetChatListAdapter
 import com.discord.widgets.chat.list.adapter.WidgetChatListAdapterItemMessage
 import com.discord.widgets.chat.list.entries.MessageEntry
+import com.discord.widgets.voice.settings.WidgetVoiceChannelSettings
 import com.facebook.drawee.span.DraweeSpanStringBuilder
 import com.lytefast.flexinput.R
 import org.json.JSONObject
@@ -71,7 +75,6 @@ class TranslateMessagesPlus : Plugin() {
     private var adapterRef: WeakReference<WidgetChatListAdapter>? = null
     private val translateButtonId = View.generateViewId()
     private val replyButtonId = View.generateViewId()
-    private val chatButtonId = View.generateViewId()
 
     // Set while Discord renders a message whose translation is shown.
     private val rendering = ThreadLocal<Translation?>()
@@ -247,11 +250,12 @@ class TranslateMessagesPlus : Plugin() {
         dialog.show(Utils.appActivity.supportFragmentManager, "TranslateMode")
     }
 
-    private fun pickChatMode(channelId: Long) {
+    private fun pickChatMode(channelId: Long, onChanged: (() -> Unit)? = null) {
         val name = chatName(channelId)
         showModePicker(name, chatModes[channelId], true) { pick ->
             setChatMode(channelId, pick)
             Utils.showToast("Auto-translate for $name: ${modeFor(channelId).label}")
+            onChanged?.invoke()
         }
     }
 
@@ -354,6 +358,26 @@ class TranslateMessagesPlus : Plugin() {
             )
         }
 
+        // Channel settings pages (the full page opened from a channel's "Edit Channel").
+        safePatch("text channel settings") {
+            patcher.patch(
+                WidgetTextChannelSettings::class.java.getDeclaredMethod("configureUI", WidgetTextChannelSettings.Model::class.java),
+                Hook { call ->
+                    val model = call.args[0] as WidgetTextChannelSettings.Model
+                    addSettingsPageRow(call.thisObject as Fragment, model.channel, "channel_settings_section_privacy_safety")
+                },
+            )
+        }
+        safePatch("voice channel settings") {
+            patcher.patch(
+                WidgetVoiceChannelSettings::class.java.getDeclaredMethod("configureUI", WidgetVoiceChannelSettings.Model::class.java),
+                Hook { call ->
+                    val model = call.args[0] as WidgetVoiceChannelSettings.Model
+                    addSettingsPageRow(call.thisObject as Fragment, model.channel, "channel_settings_section_user_management")
+                },
+            )
+        }
+
         safePatch("/translate command") { registerCommand() }
     }
 
@@ -438,6 +462,38 @@ class TranslateMessagesPlus : Plugin() {
         return row
     }
 
+    // ---- Channel settings page ---------------------------------------------------------------
+
+    /**
+     * Adds (or refreshes) the "Auto-translate" row in a channel settings page. Discord calls configureUI
+     * repeatedly, so the row is found by its tag and only created once.
+     */
+    private fun addSettingsPageRow(page: Fragment, channel: Channel, sectionIdName: String) {
+        try {
+            if (channel.D() !in CHAT_TYPES) return
+            val section = page.view?.findViewById<ViewGroup>(Utils.getResId(sectionIdName, "id")) ?: return
+            val row = section.findViewWithTag<TextView>(SHEET_TAG)
+                ?: createSettingsPageRow(section.context).also { section.addView(it) }
+            val channelId = channel.k()
+            row.text = "Auto-translate: ${modeFor(channelId).label}"
+            row.setOnClickListener {
+                pickChatMode(channelId) { row.text = "Auto-translate: ${modeFor(channelId).label}" }
+            }
+        } catch (e: Throwable) {
+            logger.error("Could not add the auto-translate row to the channel settings", e)
+        }
+    }
+
+    private fun createSettingsPageRow(context: Context): TextView =
+        TextView(context, null, 0, R.i.UiKit_Settings_Item_Icon).apply {
+            tag = SHEET_TAG
+            iconOf(context, "ic_locale_24dp")?.let { setCompoundDrawablesRelativeWithIntrinsicBounds(it, null, null, null) }
+            TextViewCompat.setCompoundDrawableTintList(
+                this,
+                ColorStateList.valueOf(ColorCompat.getThemedColor(context, R.b.colorInteractiveNormal)),
+            )
+        }
+
     // ---- Message long-press menu -------------------------------------------------------------
 
     private fun configureMenu(actions: WidgetChatListActions, model: WidgetChatListActions.Model) {
@@ -446,22 +502,9 @@ class TranslateMessagesPlus : Plugin() {
         val content = message.content.orEmpty()
         val channelId = message.channelId
 
-        // All three are created together so they always sit in the same order, at the bottom.
+        // Both are created together so they always sit in the same order, at the bottom.
         val translateButton = layout.findViewById<TextView>(translateButtonId) ?: createButton(layout, translateButtonId, "ic_locale_24dp")
         val replyButton = layout.findViewById<TextView>(replyButtonId) ?: createButton(layout, replyButtonId, "ic_reply_24dp", "ic_reply_white_24dp", "ic_locale_24dp")
-        val chatButton = layout.findViewById<TextView>(chatButtonId) ?: createButton(layout, chatButtonId, "ic_locale_24dp")
-
-        // Auto-translate for this chat. Shown on every message.
-        try {
-            chatButton.visibility = View.VISIBLE
-            chatButton.text = "Auto-translate: ${modeFor(channelId).label}"
-            chatButton.setOnClickListener {
-                actions.dismiss()
-                pickChatMode(channelId)
-            }
-        } catch (e: Throwable) {
-            logger.error("Could not set up the auto-translate button", e)
-        }
 
         if (!shouldTranslate(content)) {
             translateButton.visibility = View.GONE
