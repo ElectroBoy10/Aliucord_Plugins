@@ -14,7 +14,9 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.core.widget.TextViewCompat
+import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentManager
 import com.aliucord.Http
 import com.aliucord.Utils
 import com.aliucord.annotations.AliucordPlugin
@@ -235,7 +237,7 @@ class TranslateMessagesPlus : Plugin() {
         }
 
     /** Asks which mode to use. [current] null means "follows the default" and is only offered when [allowDefault]. */
-    fun showModePicker(title: String, current: Mode?, allowDefault: Boolean, onPick: (Mode?) -> Unit) {
+    fun showModePicker(title: String, current: Mode?, allowDefault: Boolean, fm: FragmentManager, onPick: (Mode?) -> Unit) {
         val choices = ArrayList<Mode?>()
         if (allowDefault) choices.add(null)
         for (mode in Mode.values()) choices.add(mode)
@@ -247,12 +249,26 @@ class TranslateMessagesPlus : Plugin() {
             if (mode == current) "$label ✓" else label
         }.toTypedArray()
         dialog.onResultListener = { which -> onPick(choices[which]) }
-        dialog.show(Utils.appActivity.supportFragmentManager, "TranslateMode")
+        showDialog(dialog, fm, "TranslateMode")
     }
 
-    private fun pickChatMode(channelId: Long, onChanged: (() -> Unit)? = null) {
+    /**
+     * Shows a dialog on the given FragmentManager. Callers pass the FragmentManager of the screen the user is
+     * on (a menu's or page's own parentFragmentManager): Utils.appActivity is only the most recently created
+     * Discord screen, which can be a settings page that has since closed.
+     */
+    private fun showDialog(dialog: DialogFragment, fm: FragmentManager, tag: String) {
+        try {
+            dialog.show(fm, tag)
+        } catch (e: Throwable) {
+            logger.error("Could not open dialog $tag", e)
+            Utils.showToast("Couldn't open the dialog")
+        }
+    }
+
+    private fun pickChatMode(channelId: Long, fm: FragmentManager, onChanged: (() -> Unit)? = null) {
         val name = chatName(channelId)
-        showModePicker(name, chatModes[channelId], true) { pick ->
+        showModePicker(name, chatModes[channelId], true, fm) { pick ->
             setChatMode(channelId, pick)
             Utils.showToast("Auto-translate for $name: ${modeFor(channelId).label}")
             onChanged?.invoke()
@@ -437,8 +453,9 @@ class TranslateMessagesPlus : Plugin() {
         val channelId = channel.k()
         row.text = "Auto-translate: ${modeFor(channelId).label}"
         row.setOnClickListener {
+            val fm = sheet.parentFragmentManager
             sheet.dismiss()
-            pickChatMode(channelId)
+            pickChatMode(channelId, fm)
         }
     }
 
@@ -477,7 +494,9 @@ class TranslateMessagesPlus : Plugin() {
             val channelId = channel.k()
             row.text = "Auto-translate: ${modeFor(channelId).label}"
             row.setOnClickListener {
-                pickChatMode(channelId) { row.text = "Auto-translate: ${modeFor(channelId).label}" }
+                pickChatMode(channelId, page.parentFragmentManager) {
+                    row.text = "Auto-translate: ${modeFor(channelId).label}"
+                }
             }
         } catch (e: Throwable) {
             logger.error("Could not add the auto-translate row to the channel settings", e)
@@ -544,8 +563,9 @@ class TranslateMessagesPlus : Plugin() {
             replyButton.visibility = View.VISIBLE
             replyButton.text = "Reply (translate to ${Languages.name(replyLanguage)})"
             replyButton.setOnClickListener {
+                val fm = actions.parentFragmentManager
                 actions.dismiss()
-                showReplyInput(messageId, channelId, guildId, replyLanguage, "")
+                showReplyInput(fm, messageId, channelId, guildId, replyLanguage, "")
             }
         } else {
             replyButton.visibility = View.GONE
@@ -573,7 +593,7 @@ class TranslateMessagesPlus : Plugin() {
 
     private fun multiLine() = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
 
-    private fun showReplyInput(messageId: Long, channelId: Long, guildId: Long?, language: String, prefill: String) {
+    private fun showReplyInput(fm: FragmentManager, messageId: Long, channelId: Long, guildId: Long?, language: String, prefill: String) {
         val preview = previewReplies
         val languageName = Languages.name(language)
         val dialog = InputDialog()
@@ -596,13 +616,13 @@ class TranslateMessagesPlus : Plugin() {
                 Utils.showToast("Type something first")
             } else {
                 dialog.dismiss()
-                translateReply(text, language, messageId, channelId, guildId, preview)
+                translateReply(fm, text, language, messageId, channelId, guildId, preview)
             }
         }
-        dialog.show(Utils.appActivity.supportFragmentManager, "TranslateReply")
+        showDialog(dialog, fm, "TranslateReply")
     }
 
-    private fun translateReply(text: String, language: String, messageId: Long, channelId: Long, guildId: Long?, preview: Boolean) {
+    private fun translateReply(fm: FragmentManager, text: String, language: String, messageId: Long, channelId: Long, guildId: Long?, preview: Boolean) {
         val pool = executor ?: return
         val currentService = service
         Utils.showToast("Translating…")
@@ -610,7 +630,7 @@ class TranslateMessagesPlus : Plugin() {
             try {
                 val result = Translator.translate(text, language, currentService)
                 if (preview) {
-                    Utils.mainThread.post { showReplyPreview(text, result.text, language, messageId, channelId, guildId) }
+                    Utils.mainThread.post { showReplyPreview(fm, text, result.text, language, messageId, channelId, guildId) }
                 } else {
                     postReply(result.text, messageId, channelId, guildId)
                 }
@@ -624,7 +644,7 @@ class TranslateMessagesPlus : Plugin() {
         }
     }
 
-    private fun showReplyPreview(original: String, translated: String, language: String, messageId: Long, channelId: Long, guildId: Long?) {
+    private fun showReplyPreview(fm: FragmentManager, original: String, translated: String, language: String, messageId: Long, channelId: Long, guildId: Long?) {
         val dialog = InputDialog()
         dialog.setTitle("Send this translation?")
         dialog.setDescription("You wrote:\n$original\n\nIn ${Languages.name(language)} (you can edit it):")
@@ -647,7 +667,7 @@ class TranslateMessagesPlus : Plugin() {
                 pool?.execute { postReply(text, messageId, channelId, guildId) }
             }
         }
-        dialog.show(Utils.appActivity.supportFragmentManager, "TranslateReplyPreview")
+        showDialog(dialog, fm, "TranslateReplyPreview")
     }
 
     /** Sends [text] as a reply to the message. Runs on a worker thread. */

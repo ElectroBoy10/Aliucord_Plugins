@@ -81,7 +81,7 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
             .sortedBy { it.name.lowercase() }
             .forEach { row ->
                 action(row.name, row.mode.label, container) {
-                    plugin.showModePicker(row.name, row.mode, true) { pick ->
+                    plugin.showModePicker(row.name, row.mode, true, parentFragmentManager) { pick ->
                         plugin.setChatMode(row.id, pick)
                         showChats()
                     }
@@ -90,7 +90,7 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
     }
 
     private fun pickDefault() {
-        plugin.showModePicker("Default for all chats", plugin.defaultMode, false) { pick ->
+        plugin.showModePicker("Default for all chats", plugin.defaultMode, false, parentFragmentManager) { pick ->
             if (pick == null) return@showModePicker
             plugin.defaultMode = pick
             defaultSubtitle?.text = pick.label
