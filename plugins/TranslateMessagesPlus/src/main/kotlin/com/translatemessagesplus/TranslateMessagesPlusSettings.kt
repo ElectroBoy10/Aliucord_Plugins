@@ -53,9 +53,14 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
         defaultSubtitle = action("Default for all chats", plugin.defaultMode.label) { pickDefault() }
         note(
             linearLayout,
+            "Privacy: automatic translation sends eligible message text to the translation service you select. " +
+            "Google Translate is used by default; you can instead choose DeepL or your own LibreTranslate server. " +
+            "In chats set to Everyone or My messages only, your own messages are sent too.",
+        )
+        note(
+            linearLayout,
             "Chats below with their own setting ignore this default. To add one, long-press a channel or DM in your list " +
-                "(or a message) and choose Auto-translate. In a chat set to Everyone or My messages only, your own messages " +
-                "are also sent to the translation service.",
+            "(or a message) and choose Auto-translate.",
         )
         chatsContainer = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
         add(chatsContainer!!)
