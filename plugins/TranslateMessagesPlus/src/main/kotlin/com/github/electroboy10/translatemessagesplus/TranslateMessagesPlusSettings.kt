@@ -15,6 +15,8 @@ import com.aliucord.views.TextInput
 import com.discord.views.CheckedSetting
 import com.lytefast.flexinput.R
 
+private class ChatRow(val id: Long, val name: String, val mode: Mode)
+
 class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) : SettingsPage() {
     private var languageSubtitle: TextView? = null
     private var defaultSubtitle: TextView? = null
@@ -75,12 +77,12 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
             return
         }
         overrides
-            .map { (id, mode) -> Triple(id, plugin.chatName(id), mode) }
-            .sortedBy { it.second.lowercase() }
-            .forEach { (id, name, mode) ->
-                action(name, mode.label, container) {
-                    plugin.showModePicker(name, mode, true) { pick ->
-                        plugin.setChatMode(id, pick)
+            .map { ChatRow(it.first, plugin.chatName(it.first), it.second) }
+            .sortedBy { it.name.lowercase() }
+            .forEach { row ->
+                action(row.name, row.mode.label, container) {
+                    plugin.showModePicker(row.name, row.mode, true) { pick ->
+                        plugin.setChatMode(row.id, pick)
                         showChats()
                     }
                 }
