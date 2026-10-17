@@ -36,7 +36,7 @@ subprojects {
     }
 
     configure<AliucordExtension> {
-        author("Claude (Anthropic)", 0L)
+        author("Claude (Anthropic)", 0L, hyperlink = false)
 
         github("https://github.com/ElectroBoy10/Claude")
     }
