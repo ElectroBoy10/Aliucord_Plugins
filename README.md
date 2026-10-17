@@ -1,7 +1,7 @@
 # Claude playground
 
 A playground for [Claude Code](https://claude.com/product/claude-code). The code in this repository was written
-by Claude (Anthropic) at the request of ElectroBoy10.
+by Claude (Anthropic).
 
 ## TranslateMessagesPlus
 
@@ -17,7 +17,7 @@ or automatically in the chats you choose, and can send your reply in the other p
 - **Added in this version:** per-chat auto-translate (Off, Everyone, Others only, My messages only), set from a
   channel's settings page or by long-pressing a channel or DM, "Reply (translate)" on translated messages, and a
   configurable colour for the "(translated …)" tag.
-- **Written with Claude Code** (Claude by Anthropic), directed by ElectroBoy10.
+- **Written with Claude Code** (Claude by Anthropic).
 
 ### License note
 

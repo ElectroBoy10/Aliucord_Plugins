@@ -1,4 +1,4 @@
-package com.github.electroboy10.translatemessagesplus
+package com.translatemessagesplus
 
 import android.content.Context
 import android.content.res.ColorStateList

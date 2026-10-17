@@ -18,7 +18,7 @@ subprojects {
 
     configure<LibraryExtension> {
         // TODO: Change to your package name
-        namespace = "com.github.electroboy10.translatemessagesplus"
+        namespace = "com.translatemessagesplus"
         compileSdk = 36
 
         defaultConfig {
