@@ -3,290 +3,565 @@ package com.multirolefilter
 import android.annotation.SuppressLint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.Editable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
-import com.aliucord.Http
 import com.aliucord.Logger
 import com.aliucord.Utils
 import com.aliucord.fragments.SettingsPage
 import com.aliucord.utils.DimenUtils.dpToPx
-import com.aliucord.utils.RxUtils.await
+import com.aliucord.utils.RxUtils
+import com.aliucord.utils.RxUtils.subscribe
 import com.aliucord.wrappers.GuildRoleWrapper
 import com.discord.api.role.GuildRole
+import com.discord.models.member.GuildMember
 import com.discord.models.user.User
 import com.discord.stores.StoreStream
 import com.discord.utilities.color.ColorCompat
 import com.discord.utilities.images.MGImages
 import com.discord.utilities.rest.RestAPI
+import com.discord.utilities.rx.ObservableExtensionsKt
 import com.discord.widgets.user.usersheet.WidgetUserSheet
 import com.facebook.drawee.view.SimpleDraweeView
 import com.lytefast.flexinput.R
-import org.json.JSONObject
-import java.util.concurrent.ConcurrentHashMap
+import rx.Subscription
+import rx.functions.Action0
+import rx.functions.Action1
 
-/** Lists the members of a server who have all of (or any of) up to five chosen roles. */
+/**
+ * "Members by role": pick roles, choose whether members need all of them or any of them, and browse the result.
+ *
+ * Every step reports what it is doing on screen, so the page can never sit on a loading message forever:
+ * a request that fails or takes too long turns into a message with a retry button.
+ */
 @SuppressLint("SetTextI18n")
 class RoleFilterPage(
     private val guildId: Long,
     private val channelId: Long,
-    private val roleIds: List<Long>,
+    initialRoles: List<Long>,
     private var matchAll: Boolean,
 ) : SettingsPage() {
     private val log = Logger("MultiRoleFilter")
 
-    // Member ids per selected role, as returned by Discord.
-    private val memberIdsByRole = LinkedHashMap<Long, Set<Long>>()
-    private var loadError: String? = null
+    private val selected = LinkedHashSet<Long>(initialRoles)
 
-    // Roles loaded one by one from a member's profile, for members whose roles are not cached.
-    private val profileRoles = ConcurrentHashMap<Long, List<Long>>()
+    // Member ids per role, as sent by Discord.
+    private val idsByRole = HashMap<Long, Set<Long>>()
+    private val loading = HashSet<Long>()
+
+    // Roles Discord would not list in full, with the reason. These fall back to members already on this device.
+    private val failures = LinkedHashMap<Long, String>()
+    private val timeouts = HashMap<Long, Runnable>()
+    private val subscriptions = ArrayList<Subscription>()
+
     private var matched: List<Long> = emptyList()
-    private var users: Map<Long, User> = emptyMap()
     private var shown = PAGE_SIZE
-    private var loadingProfiles = false
-
-    @Volatile
+    private var query = ""
     private var destroyed = false
 
-    private var statusView: TextView? = null
+    private val requestedUsers = HashSet<Long>()
+    private var userPoll: Runnable? = null
+
+    private var rolesBox: LinearLayout? = null
+    private var modeBox: LinearLayout? = null
+    private var modeHint: TextView? = null
     private var allButton: TextView? = null
     private var anyButton: TextView? = null
-    private var profilesButton: TextView? = null
-    private var listContainer: LinearLayout? = null
+    private var searchField: EditText? = null
+    private var statusView: TextView? = null
+    private var noticeView: TextView? = null
+    private var retryButton: TextView? = null
+    private var copyButton: TextView? = null
+    private var listBox: LinearLayout? = null
 
     private val textNormal get() = ColorCompat.getThemedColor(requireContext(), R.b.colorTextNormal)
     private val textMuted get() = ColorCompat.getThemedColor(requireContext(), R.b.colorTextMuted)
     private val cardBase get() = ColorCompat.getThemedColor(requireContext(), R.b.colorBackgroundSecondary)
+    private val accent get() = ContextCompat.getColor(requireContext(), R.c.brand_new_330)
+
+    // ---- Page --------------------------------------------------------------------------------
 
     override fun onViewBound(view: View) {
         super.onViewBound(view)
-        setActionBarTitle("Role filter")
-        setActionBarSubtitle("Members by role")
+        setActionBarTitle("Members by role")
+        setActionBarSubtitle(StoreStream.getGuilds().getGuild(guildId)?.name ?: "Server")
         val ctx = requireContext()
 
-        // The chosen roles.
-        val chips = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        val roles = guildRoles()
-        for (id in roleIds) {
-            val role = roles[id]
-            chips.addView(
-                TextView(ctx).apply {
-                    val color = role?.let { opaque(GuildRoleWrapper(it).color) } ?: 0
-                    text = "●  ${role?.let { GuildRoleWrapper(it).name } ?: "Unknown role"}"
-                    setTextColor(textNormal)
-                    textSize = 15f
-                    setPadding(dpToPx(4), dpToPx(2), dpToPx(4), dpToPx(2))
-                    if (color != 0) {
-                        val span = SpannableStringBuilder(text)
-                        span.setSpan(ForegroundColorSpan(color), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        text = span
+        addView(label(ctx, "ROLES"))
+        rolesBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        addView(rolesBox)
+        addView(
+            button(ctx, "+  Add or remove roles") { openPicker() },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(6) },
+        )
+
+        modeBox = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dpToPx(18), 0, 0)
+        }
+        modeBox!!.addView(label(ctx, "SHOW MEMBERS WHO HAVE"))
+        val toggle = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        allButton = segment(ctx, "All of the roles") { setMode(true) }
+        anyButton = segment(ctx, "Any of the roles") { setMode(false) }
+        toggle.addView(allButton, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dpToPx(6) })
+        toggle.addView(anyButton, LinearLayout.LayoutParams(0, -2, 1f))
+        modeBox!!.addView(toggle)
+        modeHint = TextView(ctx).apply {
+            setTextColor(textMuted)
+            textSize = 13f
+            setPadding(dpToPx(2), dpToPx(6), dpToPx(2), 0)
+        }
+        modeBox!!.addView(modeHint)
+        addView(modeBox)
+
+        addView(
+            TextView(ctx).apply {
+                setTextColor(textNormal)
+                setTypeface(null, Typeface.BOLD)
+                textSize = 16f
+                setPadding(dpToPx(2), dpToPx(22), dpToPx(2), dpToPx(4))
+                statusView = this
+            },
+        )
+        noticeView = TextView(ctx).apply {
+            setTextColor(textMuted)
+            textSize = 13f
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+            background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 70))
+            visibility = View.GONE
+        }
+        addView(noticeView, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
+
+        retryButton = button(ctx, "Try again") { retryFailed() }.apply { visibility = View.GONE }
+        addView(retryButton, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
+
+        searchField = EditText(ctx).apply {
+            hint = "Search these members"
+            setHintTextColor(textMuted)
+            setTextColor(textNormal)
+            textSize = 15f
+            setSingleLine(true)
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+            background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 70))
+            visibility = View.GONE
+            addTextChangedListener(
+                object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+
+                    override fun afterTextChanged(s: Editable?) {
+                        query = s?.toString()?.trim()?.lowercase() ?: ""
+                        shown = PAGE_SIZE
+                        drawList()
                     }
                 },
             )
         }
-        addView(chips)
+        addView(searchField, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
 
-        // Match mode.
-        val toggle = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dpToPx(10), 0, dpToPx(6))
-        }
-        allButton = segment(ctx, "Has all of them") { setMatch(true) }
-        anyButton = segment(ctx, "Has any of them") { setMatch(false) }
-        toggle.addView(allButton, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dpToPx(6) })
-        toggle.addView(anyButton, LinearLayout.LayoutParams(0, -2, 1f))
-        addView(toggle)
-        styleSegments()
+        listBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        addView(listBox)
 
-        statusView = TextView(ctx).apply {
-            setTextColor(textMuted)
-            textSize = 14f
-            setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(8))
-            text = "Loading members…"
-        }
-        addView(statusView!!)
+        copyButton = button(ctx, "Copy this list of names") { copyNames() }.apply { visibility = View.GONE }
+        addView(copyButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(8) })
 
-        profilesButton = TextView(ctx).apply {
-            gravity = Gravity.CENTER
-            setTextColor(textNormal)
-            textSize = 14f
-            visibility = View.GONE
-            background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 90))
-            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-            setOnClickListener { loadMissingProfiles() }
-        }
-        linearLayout.addView(profilesButton!!, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
-
-        listContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        addView(listContainer!!)
-
-        loadRoleMembers()
+        refreshAll()
     }
 
     override fun onDestroyView() {
         destroyed = true
-        statusView = null
+        for (task in timeouts.values) Utils.mainThread.removeCallbacks(task)
+        timeouts.clear()
+        userPoll?.let { Utils.mainThread.removeCallbacks(it) }
+        for (sub in subscriptions) runCatching { sub.unsubscribe() }
+        subscriptions.clear()
+        rolesBox = null
+        modeBox = null
+        modeHint = null
         allButton = null
         anyButton = null
-        profilesButton = null
-        listContainer = null
+        searchField = null
+        statusView = null
+        noticeView = null
+        retryButton = null
+        copyButton = null
+        listBox = null
         super.onDestroyView()
     }
 
-    // ---- Data --------------------------------------------------------------------------------
+    private val alive get() = !destroyed && isAdded && listBox != null
+
+    // ---- Roles -------------------------------------------------------------------------------
 
     private fun guildRoles(): Map<Long, GuildRole> = StoreStream.getGuilds().roles[guildId] ?: emptyMap()
 
-    /** Fetches the member ids of every chosen role (once), then combines them. */
-    private fun loadRoleMembers() {
-        Utils.threadPool.execute {
-            for (roleId in roleIds) {
-                if (destroyed) return@execute
-                val (ids, error) = RestAPI.getApi().getGuildRoleMemberIds(guildId, roleId).await()
-                if (error != null || ids == null) {
-                    log.error("Could not load members of role $roleId", error)
-                    loadError = "Discord would not return the members of every role" +
-                        (error?.message?.let { " ($it)" } ?: "") + ". You may need permission to manage roles."
-                    break
-                }
-                memberIdsByRole[roleId] = ids.toSet()
-            }
-            recompute()
-        }
+    private fun roleName(id: Long) = guildRoles()[id]?.let { GuildRoleWrapper(it).name } ?: "Unknown role"
+
+    private fun openPicker() {
+        val all = guildRoles().values
+            .map { GuildRoleWrapper(it) }
+            .filter { it.id != guildId } // @everyone
+            .sortedByDescending { it.position }
+        RolePickerSheet(all, selected, MAX_ROLES) { picked ->
+            selected.clear()
+            selected.addAll(picked)
+            shown = PAGE_SIZE
+            refreshAll()
+        }.show(parentFragmentManager, "multirolefilter-roles")
     }
 
-    /** Works out who matches the current mode and makes sure their user data is loaded. Runs on a worker thread. */
-    private fun recompute() {
-        val error = loadError
-        val ids: List<Long> = if (error != null || memberIdsByRole.size < roleIds.size) {
-            emptyList()
-        } else {
-            val result = LinkedHashSet<Long>(memberIdsByRole[roleIds[0]] ?: emptySet())
-            for (roleId in roleIds.drop(1)) {
-                val members = memberIdsByRole[roleId] ?: emptySet()
-                if (matchAll) result.retainAll(members) else result.addAll(members)
-            }
-            result.toList()
-        }
-        val wanted = ids.take(MAX_RESOLVE)
-        var found: Map<Long, User> = StoreStream.getUsers().getUsers(wanted, true)
-        val missing = wanted.filter { found[it] == null }
-        if (missing.isNotEmpty()) {
-            StoreStream.getUsers().fetchUsers(missing)
-            // The users arrive asynchronously; give them a few seconds.
-            for (attempt in 1..8) {
-                if (destroyed) return
-                Thread.sleep(500)
-                found = StoreStream.getUsers().getUsers(wanted, true)
-                if (wanted.all { found[it] != null }) break
-            }
-        }
-        val resolved = found
-        val sorted = ids.sortedBy { displayName(it, resolved[it]).lowercase() }
-        matched = sorted
-        users = resolved
+    private fun removeRole(id: Long) {
+        selected.remove(id)
+        refreshAll()
+    }
+
+    private fun setMode(all: Boolean) {
+        if (matchAll == all) return
+        matchAll = all
         shown = PAGE_SIZE
-        Utils.mainThread.post { if (!destroyed && isAdded) render() }
+        drawMode()
+        recompute()
     }
 
-    private fun displayName(userId: Long, user: User?): String {
-        val nick = StoreStream.getGuilds().getMember(guildId, userId)?.nick
-        return nick ?: user?.username ?: userId.toString()
+    /** Everything that depends on the chosen roles. */
+    private fun refreshAll() {
+        if (!alive) return
+        drawRoles()
+        drawMode()
+        for (id in selected) loadRole(id)
+        recompute()
     }
 
-    /** Role ids a member has: loaded from their profile, cached by Discord, or null when unknown. */
-    private fun memberRoleIds(userId: Long): List<Long>? =
-        profileRoles[userId] ?: StoreStream.getGuilds().getMember(guildId, userId)?.roles
+    // ---- Loading -----------------------------------------------------------------------------
+
+    private fun loadRole(roleId: Long) {
+        if (idsByRole.containsKey(roleId) || loading.contains(roleId) || failures.containsKey(roleId)) return
+        loading.add(roleId)
+
+        val timeout = Runnable { finishRole(roleId, null, "Discord took too long to answer.") }
+        timeouts[roleId] = timeout
+        Utils.mainThread.postDelayed(timeout, REQUEST_TIMEOUT_MS)
+
+        try {
+            val request = ObservableExtensionsKt.computationLatest(RestAPI.getApi().getGuildRoleMemberIds(guildId, roleId))
+            val subscriber = RxUtils.createActionSubscriber<Any?>(
+                onNext = Action1<Any?> { value -> Utils.mainThread.post { finishRole(roleId, parseIds(value), null) } },
+                onError = Action1<Throwable> { t ->
+                    log.error("Could not load the members of role $roleId", t)
+                    Utils.mainThread.post { finishRole(roleId, null, describe(t)) }
+                },
+                onCompleted = Action0 { Utils.mainThread.post { finishRole(roleId, emptySet(), null) } },
+            )
+            subscriptions.add(request.subscribe(subscriber))
+        } catch (t: Throwable) {
+            log.error("Could not start loading role $roleId", t)
+            finishRole(roleId, null, describe(t))
+        }
+    }
+
+    /** Called on the main thread with either the member ids or a failure reason. Only the first call per role counts. */
+    private fun finishRole(roleId: Long, ids: Set<Long>?, error: String?) {
+        if (!loading.remove(roleId)) return
+        timeouts.remove(roleId)?.let { Utils.mainThread.removeCallbacks(it) }
+        if (ids != null) idsByRole[roleId] = ids else failures[roleId] = error ?: "Unknown error."
+        if (alive) recompute()
+    }
+
+    private fun retryFailed() {
+        val again = failures.keys.toList()
+        failures.clear()
+        for (id in again) if (selected.contains(id)) loadRole(id)
+        recompute()
+    }
+
+    private fun parseIds(value: Any?): Set<Long> {
+        val out = LinkedHashSet<Long>()
+        (value as? Iterable<*>)?.forEach { item ->
+            when (item) {
+                is Number -> out.add(item.toLong())
+                else -> item?.toString()?.toLongOrNull()?.let { out.add(it) }
+            }
+        }
+        return out
+    }
+
+    private fun describe(t: Throwable): String {
+        val text = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+        return text.take(160)
+    }
+
+    /** Members Discord has already given this device, for roles it would not list in full. */
+    private fun cachedIds(roleId: Long): Set<Long> {
+        val members = StoreStream.getGuilds().members[guildId] ?: return emptySet()
+        val out = LinkedHashSet<Long>()
+        for (member in members.values) if (member.roles.contains(roleId)) out.add(member.userId)
+        return out
+    }
+
+    private fun idsFor(roleId: Long): Set<Long> =
+        idsByRole[roleId] ?: if (failures.containsKey(roleId)) cachedIds(roleId) else emptySet()
+
+    // ---- Result ------------------------------------------------------------------------------
+
+    private fun recompute() {
+        if (!alive) return
+        if (selected.isEmpty() || loading.isNotEmpty()) {
+            matched = emptyList()
+        } else {
+            val roles = selected.toList()
+            val result = LinkedHashSet<Long>(idsFor(roles[0]))
+            for (id in roles.drop(1)) {
+                if (matchAll) result.retainAll(idsFor(id)) else result.addAll(idsFor(id))
+            }
+            matched = result.toList()
+            requestUsers(matched)
+        }
+        render()
+    }
+
+    /** Asks Discord for the profiles of members it has not shown us yet, then waits for them to arrive. */
+    private fun requestUsers(ids: List<Long>) {
+        val wanted = ids.take(RESOLVE_CAP)
+        val known = StoreStream.getUsers().users
+        val missing = wanted.filter { known[it] == null && requestedUsers.add(it) }
+        if (missing.isNotEmpty()) {
+            Utils.threadPool.execute {
+                try {
+                    for (chunk in missing.chunked(100)) {
+                        if (destroyed) return@execute
+                        StoreStream.getUsers().fetchUsers(chunk)
+                        Thread.sleep(200)
+                    }
+                } catch (t: Throwable) {
+                    log.error("Could not request member profiles", t)
+                }
+            }
+        }
+        pollUsers(wanted, 0, -1)
+    }
+
+    private fun pollUsers(wanted: List<Long>, attempt: Int, lastCount: Int) {
+        userPoll?.let { Utils.mainThread.removeCallbacks(it) }
+        val task = Runnable {
+            if (!alive) return@Runnable
+            val users = StoreStream.getUsers().users
+            val count = wanted.count { users[it] != null }
+            if (count != lastCount) drawList()
+            if (count < wanted.size && attempt < POLL_ATTEMPTS) pollUsers(wanted, attempt + 1, count)
+        }
+        userPoll = task
+        Utils.mainThread.postDelayed(task, if (attempt == 0) 400L else POLL_DELAY_MS)
+    }
 
     // ---- Drawing -----------------------------------------------------------------------------
 
-    private fun setMatch(all: Boolean) {
-        if (matchAll == all) return
-        matchAll = all
-        styleSegments()
-        statusView?.text = "Loading members…"
-        listContainer?.removeAllViews()
-        Utils.threadPool.execute { recompute() }
-    }
-
-    private fun styleSegments() {
-        val accent = ContextCompat.getColor(requireContext(), R.c.brand_new_330)
-        for ((button, selected) in listOf(allButton to matchAll, anyButton to !matchAll)) {
-            button ?: continue
-            button.background = pill(
-                if (selected) ColorUtils.setAlphaComponent(accent, 70) else cardBase,
-                if (selected) accent else ColorUtils.setAlphaComponent(textMuted, 90),
+    private fun drawRoles() {
+        val box = rolesBox ?: return
+        val ctx = requireContext()
+        box.removeAllViews()
+        if (selected.isEmpty()) {
+            box.addView(
+                TextView(ctx).apply {
+                    text = "No roles chosen yet. Tap the button below to pick one or more roles."
+                    setTextColor(textMuted)
+                    textSize = 14f
+                    setPadding(dpToPx(2), dpToPx(4), dpToPx(2), dpToPx(4))
+                },
             )
-            button.setTextColor(if (selected) textNormal else textMuted)
-            button.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
-        }
-    }
-
-    private fun render() {
-        val container = listContainer ?: return
-        container.removeAllViews()
-        val error = loadError
-        if (error != null) {
-            statusView?.text = error
-            profilesButton?.visibility = View.GONE
             return
         }
-        val total = matched.size
-        val mode = if (matchAll) "all" else "any"
-        statusView?.text = when {
-            total == 0 -> "No members have $mode of these roles."
-            total > MAX_RESOLVE -> "$total members match. Showing the first $MAX_RESOLVE."
-            else -> "$total member${if (total == 1) "" else "s"} with $mode of these roles"
-        }
-
-        val visible = matched.take(minOf(shown, MAX_RESOLVE))
-        for (userId in visible) container.addView(buildCard(userId))
-
-        if (visible.size < minOf(total, MAX_RESOLVE)) {
-            container.addView(
-                TextView(requireContext()).apply {
-                    text = "Show ${minOf(PAGE_SIZE, minOf(total, MAX_RESOLVE) - visible.size)} more"
-                    gravity = Gravity.CENTER
-                    setTextColor(textNormal)
-                    background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 90))
-                    setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-                    setOnClickListener {
-                        shown += PAGE_SIZE
-                        render()
-                    }
+        val roles = guildRoles()
+        for (id in selected) {
+            val role = roles[id]?.let { GuildRoleWrapper(it) }
+            val count = idsByRole[id]?.size
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dpToPx(12), dpToPx(8), dpToPx(4), dpToPx(8))
+                background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 70))
+            }
+            row.addView(
+                TextView(ctx).apply {
+                    text = "●"
+                    textSize = 16f
+                    setTextColor(if (role != null && role.color != 0) opaque(role.color) else textMuted)
                 },
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(4) },
+                LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dpToPx(10) },
             )
-        }
-
-        val unknown = visible.count { memberRoleIds(it) == null }
-        profilesButton?.apply {
-            visibility = if (unknown > 0 && !loadingProfiles) View.VISIBLE else View.GONE
-            text = "Load all roles for $unknown member${if (unknown == 1) "" else "s"}"
+            row.addView(
+                TextView(ctx).apply {
+                    val suffix = when {
+                        count != null -> "  ·  $count ${if (count == 1) "member" else "members"}"
+                        failures.containsKey(id) -> "  ·  partial list"
+                        else -> "  ·  loading…"
+                    }
+                    val sb = SpannableStringBuilder((role?.name ?: "Unknown role") + suffix)
+                    val nameEnd = (role?.name ?: "Unknown role").length
+                    sb.setSpan(ForegroundColorSpan(textMuted), nameEnd, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    text = sb
+                    textSize = 15f
+                    setTextColor(textNormal)
+                },
+                LinearLayout.LayoutParams(0, -2, 1f),
+            )
+            row.addView(
+                TextView(ctx).apply {
+                    text = "✕"
+                    textSize = 16f
+                    setTextColor(textMuted)
+                    setPadding(dpToPx(14), dpToPx(6), dpToPx(14), dpToPx(6))
+                    setOnClickListener { removeRole(id) }
+                },
+            )
+            box.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(6) })
         }
     }
 
-    private fun buildCard(userId: Long): View {
+    private fun drawMode() {
+        val box = modeBox ?: return
+        box.visibility = if (selected.size >= 2) View.VISIBLE else View.GONE
+        modeHint?.text = if (matchAll) {
+            "Only members who have every one of the chosen roles."
+        } else {
+            "Members who have at least one of the chosen roles."
+        }
+        for ((button, on) in listOf(allButton to matchAll, anyButton to !matchAll)) {
+            button ?: continue
+            button.background = pill(
+                if (on) ColorUtils.setAlphaComponent(accent, 70) else cardBase,
+                if (on) accent else ColorUtils.setAlphaComponent(textMuted, 90),
+            )
+            button.setTextColor(if (on) textNormal else textMuted)
+            button.setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
+        }
+    }
+
+    /** Status line, notices and the list. */
+    private fun render() {
+        if (!alive) return
+        val n = selected.size
+        val status = statusView ?: return
+        val notice = noticeView ?: return
+        val retry = retryButton ?: return
+
+        // What went wrong, if anything.
+        if (failures.isNotEmpty() && loading.isEmpty()) {
+            val names = failures.keys.joinToString(", ") { roleName(it) }
+            val reason = failures.values.first()
+            notice.text = "Discord didn't send the full member list for $names ($reason). " +
+                "Showing only the members already loaded on your device, so some people may be missing."
+            notice.visibility = View.VISIBLE
+            retry.visibility = View.VISIBLE
+        } else {
+            notice.visibility = View.GONE
+            retry.visibility = View.GONE
+        }
+
+        status.text = when {
+            n == 0 -> ""
+            loading.isNotEmpty() -> "Loading members… (${n - loading.size} of $n roles done)"
+            matched.isEmpty() && matchAll && n > 1 && selected.any { idsFor(it).isNotEmpty() } ->
+                "Nobody has all of these roles.\nTry “Any of the roles” to see members who have at least one."
+            matched.isEmpty() -> if (n == 1) "Nobody has this role." else "Nobody has any of these roles."
+            else -> {
+                val count = matched.size
+                val people = "$count ${if (count == 1) "member" else "members"}"
+                when {
+                    n == 1 -> "$people with this role"
+                    matchAll -> "$people with all $n roles"
+                    else -> "$people with at least one of these $n roles"
+                } + if (count > RESOLVE_CAP) "\nShowing names for the first $RESOLVE_CAP." else ""
+            }
+        }
+        searchField?.visibility = if (matched.size > SEARCH_FROM) View.VISIBLE else View.GONE
+        copyButton?.visibility = if (matched.isNotEmpty()) View.VISIBLE else View.GONE
+        drawList()
+    }
+
+    private fun drawList() {
+        val box = listBox ?: return
+        if (!alive) return
         val ctx = requireContext()
-        val user = users[userId]
+        box.removeAllViews()
+        if (matched.isEmpty()) return
+
+        val users = StoreStream.getUsers().users
+        val sorted = matched.sortedWith(
+            compareBy({ users[it] == null }, { displayName(it, users[it]).lowercase() }),
+        )
+        val filtered = if (query.isEmpty()) {
+            sorted
+        } else {
+            sorted.filter {
+                displayName(it, users[it]).lowercase().contains(query) ||
+                    users[it]?.username?.lowercase()?.contains(query) == true ||
+                    it.toString() == query
+            }
+        }
+
+        if (filtered.isEmpty()) {
+            box.addView(
+                TextView(ctx).apply {
+                    text = "No one matches “$query”."
+                    setTextColor(textMuted)
+                    textSize = 14f
+                    setPadding(dpToPx(2), dpToPx(8), dpToPx(2), dpToPx(8))
+                },
+            )
+            return
+        }
+
+        val visible = filtered.take(shown)
+        for (id in visible) box.addView(buildCard(id, users[id]))
+        if (filtered.size > visible.size) {
+            val left = filtered.size - visible.size
+            box.addView(
+                button(ctx, "Show ${minOf(PAGE_SIZE, left)} more  ($left left)") {
+                    shown += PAGE_SIZE
+                    drawList()
+                },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(2) },
+            )
+        }
+    }
+
+    private fun displayName(userId: Long, user: User?): String =
+        StoreStream.getGuilds().getMember(guildId, userId)?.nick ?: user?.username ?: "User $userId"
+
+    private fun copyNames() {
+        val users = StoreStream.getUsers().users
+        val text = matched
+            .sortedBy { displayName(it, users[it]).lowercase() }
+            .joinToString("\n") { id ->
+                val user = users[id]
+                if (user != null) "${displayName(id, user)} (${user.username})" else id.toString()
+            }
+        Utils.setClipboard("Members", text)
+        Utils.showToast("Copied ${matched.size} ${if (matched.size == 1) "member" else "members"}")
+    }
+
+    private fun buildCard(userId: Long, user: User?): View {
+        val ctx = requireContext()
         val member = StoreStream.getGuilds().getMember(guildId, userId)
         val roles = guildRoles()
-        val known = memberRoleIds(userId)
 
-        // Roles to show: everything Discord has for them, plus the chosen roles we know they have.
-        val ids = LinkedHashSet<Long>()
-        known?.let { ids.addAll(it) }
-        for ((roleId, members) in memberIdsByRole) if (members.contains(userId)) ids.add(roleId)
-        val memberRoles = ids.mapNotNull { roles[it] }.map { GuildRoleWrapper(it) }.sortedByDescending { it.position }
-        val mainColor = memberRoles.firstOrNull { it.color != 0 }?.let { opaque(it.color) }
+        // The chosen roles this member has, highest first.
+        val theirs = selected
+            .filter { idsFor(it).contains(userId) }
+            .mapNotNull { roles[it] }
+            .map { GuildRoleWrapper(it) }
+            .sortedByDescending { it.position }
+        val mainColor = theirs.firstOrNull { it.color != 0 }?.let { opaque(it.color) }
 
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -295,28 +570,26 @@ class RoleFilterPage(
             background = GradientDrawable().apply {
                 cornerRadius = dpToPx(14).toFloat()
                 if (mainColor != null) {
-                    setColor(ColorUtils.blendARGB(cardBase, mainColor, 0.16f))
-                    setStroke(dpToPx(1), ColorUtils.setAlphaComponent(mainColor, 130))
+                    setColor(ColorUtils.blendARGB(cardBase, mainColor, 0.14f))
+                    setStroke(dpToPx(1), ColorUtils.setAlphaComponent(mainColor, 120))
                 } else {
                     setColor(cardBase)
                     setStroke(dpToPx(1), ColorUtils.setAlphaComponent(textMuted, 60))
                 }
             }
             isClickable = true
-            setOnClickListener {
-                WidgetUserSheet.show(userId, channelId, parentFragmentManager, guildId)
-            }
+            setOnClickListener { WidgetUserSheet.show(userId, channelId, parentFragmentManager, guildId) }
             setOnLongClickListener {
                 Utils.setClipboard("User ID", userId.toString())
-                Utils.showToast("Copied ID to clipboard!")
+                Utils.showToast("Copied user ID")
                 true
             }
         }
 
         val avatar = SimpleDraweeView(ctx)
-        MGImages.setRoundingParams(avatar, 22f, false, null, null, 0f)
+        MGImages.setRoundingParams(avatar, 20f, false, null, null, 0f)
         MGImages.setImage(avatar, avatarUrl(userId, user, member))
-        card.addView(avatar, LinearLayout.LayoutParams(dpToPx(44), dpToPx(44)).apply { marginEnd = dpToPx(12) })
+        card.addView(avatar, LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)).apply { marginEnd = dpToPx(12) })
 
         val column = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         val nick = member?.nick
@@ -337,14 +610,17 @@ class RoleFilterPage(
                 },
             )
         }
-        column.addView(
-            TextView(ctx).apply {
-                setTextColor(textMuted)
-                textSize = 12f
-                setPadding(0, dpToPx(4), 0, 0)
-                text = roleLine(memberRoles, known != null)
-            },
-        )
+        // With "any", say which of the chosen roles each member has. With "all" it would be the same for everyone.
+        if (!matchAll && selected.size > 1 && theirs.isNotEmpty()) {
+            column.addView(
+                TextView(ctx).apply {
+                    text = roleLine(theirs)
+                    textSize = 12f
+                    setTextColor(textMuted)
+                    setPadding(0, dpToPx(3), 0, 0)
+                },
+            )
+        }
         card.addView(column, LinearLayout.LayoutParams(0, -2, 1f))
 
         return LinearLayout(ctx).apply {
@@ -353,33 +629,31 @@ class RoleFilterPage(
         }
     }
 
-    /** "● Role  ● Role" with the chosen roles in bold, in the colour of each role. */
-    private fun roleLine(roles: List<GuildRoleWrapper>, complete: Boolean): CharSequence {
+    private fun roleLine(roles: List<GuildRoleWrapper>): CharSequence {
         val sb = SpannableStringBuilder()
-        for (role in roles) {
-            val dotColor = if (role.color != 0) opaque(role.color) else textMuted
+        for ((index, role) in roles.withIndex()) {
+            if (index > 0) sb.append("   ")
             sb.append("●")
-            sb.setSpan(ForegroundColorSpan(dotColor), sb.length - 1, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            sb.append(" ")
-            val start = sb.length
-            sb.append(role.name)
-            if (roleIds.contains(role.id)) {
-                sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                sb.setSpan(ForegroundColorSpan(textNormal), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            sb.append("    ")
+            sb.setSpan(
+                ForegroundColorSpan(if (role.color != 0) opaque(role.color) else textMuted),
+                sb.length - 1,
+                sb.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            sb.append(" ").append(role.name)
         }
-        if (!complete) sb.append("(other roles not loaded)")
         return sb
     }
 
-    private fun avatarUrl(userId: Long, user: User?, member: com.discord.models.member.GuildMember?): String =
+    private fun avatarUrl(userId: Long, user: User?, member: GuildMember?): String =
         when {
             member != null && member.hasAvatar() ->
                 "https://cdn.discordapp.com/guilds/$guildId/users/$userId/avatars/${member.avatarHash}.png?size=128"
             user?.avatar != null -> "https://cdn.discordapp.com/avatars/$userId/${user.avatar}.png?size=128"
             else -> "https://cdn.discordapp.com/embed/avatars/${(userId shr 22) % 6}.png"
         }
+
+    // ---- Small view helpers ------------------------------------------------------------------
 
     private fun opaque(color: Int) = color or 0xFF000000.toInt()
 
@@ -390,63 +664,42 @@ class RoleFilterPage(
             setStroke(dpToPx(1), stroke)
         }
 
+    private fun label(ctx: android.content.Context, text: String) =
+        TextView(ctx).apply {
+            this.text = text
+            setTextColor(textMuted)
+            setTypeface(null, Typeface.BOLD)
+            textSize = 12f
+            setPadding(dpToPx(2), 0, 0, dpToPx(6))
+        }
+
+    private fun button(ctx: android.content.Context, label: String, onClick: () -> Unit) =
+        TextView(ctx).apply {
+            text = label
+            gravity = Gravity.CENTER
+            textSize = 14f
+            setTextColor(textNormal)
+            background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 90))
+            setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12))
+            setOnClickListener { onClick() }
+        }
+
     private fun segment(ctx: android.content.Context, label: String, onClick: () -> Unit) =
         TextView(ctx).apply {
             text = label
             gravity = Gravity.CENTER
             textSize = 14f
-            setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
+            setPadding(dpToPx(8), dpToPx(12), dpToPx(8), dpToPx(12))
             setOnClickListener { onClick() }
         }
 
-    // ---- Roles of members Discord has not cached ---------------------------------------------
-
-    /**
-     * Discord only has the roles of some members. On request, loads the rest one at a time from their
-     * profiles, slowly, so it never looks like a flood of requests.
-     */
-    private fun loadMissingProfiles() {
-        if (loadingProfiles) return
-        val todo = matched.take(minOf(shown, MAX_RESOLVE)).filter { memberRoleIds(it) == null }
-        if (todo.isEmpty()) return
-        loadingProfiles = true
-        profilesButton?.visibility = View.GONE
-        Utils.threadPool.execute {
-            var done = 0
-            for (userId in todo) {
-                if (destroyed) return@execute
-                try {
-                    val path = "/users/$userId/profile?with_mutual_guilds=false&with_mutual_friends_count=false&guild_id=$guildId"
-                    Http.Request.newDiscordRNRequest(path, "GET").use { request ->
-                        request.execute().use { response ->
-                            if (response.statusCode == 429) throw IllegalStateException("rate limited")
-                            if (response.ok()) {
-                                val array = JSONObject(response.text()).optJSONObject("guild_member")?.optJSONArray("roles")
-                                val list = ArrayList<Long>()
-                                if (array != null) for (i in 0 until array.length()) array.optString(i).toLongOrNull()?.let { list.add(it) }
-                                profileRoles[userId] = list
-                            }
-                        }
-                    }
-                } catch (e: Throwable) {
-                    log.error("Could not load the roles of $userId", e)
-                    if (e.message == "rate limited") {
-                        Utils.mainThread.post { Utils.showToast("Discord asked to slow down. Try again in a minute.") }
-                        break
-                    }
-                }
-                done++
-                if (done % 5 == 0) Utils.mainThread.post { if (!destroyed && isAdded) render() }
-                Thread.sleep(PROFILE_DELAY_MS)
-            }
-            loadingProfiles = false
-            Utils.mainThread.post { if (!destroyed && isAdded) render() }
-        }
-    }
-
     companion object {
+        private const val MAX_ROLES = 10
         private const val PAGE_SIZE = 40
-        private const val MAX_RESOLVE = 500
-        private const val PROFILE_DELAY_MS = 400L
+        private const val SEARCH_FROM = 8
+        private const val RESOLVE_CAP = 600
+        private const val REQUEST_TIMEOUT_MS = 20_000L
+        private const val POLL_DELAY_MS = 900L
+        private const val POLL_ATTEMPTS = 12
     }
 }

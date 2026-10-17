@@ -5,45 +5,48 @@ import com.aliucord.Utils
 import com.aliucord.annotations.AliucordPlugin
 import com.aliucord.api.CommandsAPI
 import com.aliucord.entities.Plugin
-import com.discord.models.commands.ApplicationCommandOption
 import com.discord.api.commands.ApplicationCommandType
+import com.discord.models.commands.ApplicationCommandOption
 
 @AliucordPlugin
 class MultiRoleFilter : Plugin() {
     override fun start(context: Context) {
         val options = ArrayList<ApplicationCommandOption>()
-        options.add(Utils.createCommandOption(ApplicationCommandType.ROLE, "role1", "A role to filter by", required = true))
-        for (i in 2..MAX_ROLES) {
-            options.add(Utils.createCommandOption(ApplicationCommandType.ROLE, "role$i", "Another role to filter by (optional)"))
+        options.add(
+            Utils.createCommandOption(
+                ApplicationCommandType.ROLE,
+                "role",
+                "A role to look for (you can add more roles on the next screen)",
+            ),
+        )
+        for (i in 2..COMMAND_ROLES) {
+            options.add(Utils.createCommandOption(ApplicationCommandType.ROLE, "role$i", "Another role (optional)"))
         }
         options.add(
             Utils.createCommandOption(
                 ApplicationCommandType.STRING,
                 "match",
-                "Members must have all of the roles or any of them (default: all)",
+                "Show members who have all of the roles, or any of them",
                 choices = listOf(
-                    Utils.createCommandChoice("All of the roles", MATCH_ALL),
-                    Utils.createCommandChoice("Any of the roles", MATCH_ANY),
+                    Utils.createCommandChoice("Has all of the roles", MATCH_ALL),
+                    Utils.createCommandChoice("Has any of the roles", MATCH_ANY),
                 ),
             ),
         )
 
-        commands.registerCommand("rolefilter", "Find members who have several roles at once", options) { ctx ->
+        commands.registerCommand("rolefilter", "Find members by one or more roles", options) { ctx ->
             val guildId = ctx.currentChannel.guildId
+            if (guildId == 0L) {
+                return@registerCommand CommandsAPI.CommandResult("This command only works in a server.", null, false)
+            }
             val roleIds = ArrayList<Long>()
-            for (i in 1..MAX_ROLES) {
-                val role = ctx.getRole("role$i") ?: continue
+            for (name in listOf("role") + (2..COMMAND_ROLES).map { "role$it" }) {
+                val role = ctx.getRole(name) ?: continue
                 if (!roleIds.contains(role.id)) roleIds.add(role.id)
             }
-            if (guildId == 0L) {
-                CommandsAPI.CommandResult("Run this command in a server channel.", null, false)
-            } else if (roleIds.isEmpty()) {
-                CommandsAPI.CommandResult("Pick at least one role.", null, false)
-            } else {
-                val matchAll = ctx.getStringOrDefault("match", MATCH_ALL) != MATCH_ANY
-                Utils.openPageWithProxy(Utils.appActivity, RoleFilterPage(guildId, ctx.channelId, roleIds, matchAll))
-                CommandsAPI.CommandResult()
-            }
+            val matchAll = ctx.getStringOrDefault("match", MATCH_ALL) != MATCH_ANY
+            Utils.openPageWithProxy(Utils.appActivity, RoleFilterPage(guildId, ctx.channelId, roleIds, matchAll))
+            CommandsAPI.CommandResult()
         }
     }
 
@@ -53,7 +56,8 @@ class MultiRoleFilter : Plugin() {
     }
 
     companion object {
-        const val MAX_ROLES = 5
+        /** Roles that can be filled in directly on the slash command. More can be added on the page. */
+        const val COMMAND_ROLES = 5
         const val MATCH_ALL = "all"
         const val MATCH_ANY = "any"
     }
