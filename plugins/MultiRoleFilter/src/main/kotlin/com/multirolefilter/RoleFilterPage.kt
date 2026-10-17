@@ -1,6 +1,7 @@
 package com.multirolefilter
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
@@ -253,7 +254,8 @@ class RoleFilterPage(
         Utils.mainThread.postDelayed(timeout, REQUEST_TIMEOUT_MS)
 
         try {
-            val request = ObservableExtensionsKt.computationLatest(RestAPI.getApi().getGuildRoleMemberIds(guildId, roleId))
+            val memberIds = RestAPI.getApi().getGuildRoleMemberIds(guildId, roleId)
+            val request = ObservableExtensionsKt.computationLatest(memberIds)
             val subscriber = RxUtils.createActionSubscriber<Any?>(
                 onNext = Action1<Any?> { value -> Utils.mainThread.post { finishRole(roleId, parseIds(value), null) } },
                 onError = Action1<Throwable> { t ->
@@ -269,7 +271,10 @@ class RoleFilterPage(
         }
     }
 
-    /** Called on the main thread with either the member ids or a failure reason. Only the first call per role counts. */
+    /**
+     * Called on the main thread with either the member ids or a failure reason.
+     * Only the first call per role counts.
+     */
     private fun finishRole(roleId: Long, ids: Set<Long>?, error: String?) {
         if (!loading.remove(roleId)) return
         timeouts.remove(roleId)?.let { Utils.mainThread.removeCallbacks(it) }
@@ -664,7 +669,7 @@ class RoleFilterPage(
             setStroke(dpToPx(1), stroke)
         }
 
-    private fun label(ctx: android.content.Context, text: String) =
+    private fun label(ctx: Context, text: String) =
         TextView(ctx).apply {
             this.text = text
             setTextColor(textMuted)
@@ -673,7 +678,7 @@ class RoleFilterPage(
             setPadding(dpToPx(2), 0, 0, dpToPx(6))
         }
 
-    private fun button(ctx: android.content.Context, label: String, onClick: () -> Unit) =
+    private fun button(ctx: Context, label: String, onClick: () -> Unit) =
         TextView(ctx).apply {
             text = label
             gravity = Gravity.CENTER
@@ -684,7 +689,7 @@ class RoleFilterPage(
             setOnClickListener { onClick() }
         }
 
-    private fun segment(ctx: android.content.Context, label: String, onClick: () -> Unit) =
+    private fun segment(ctx: Context, label: String, onClick: () -> Unit) =
         TextView(ctx).apply {
             text = label
             gravity = Gravity.CENTER

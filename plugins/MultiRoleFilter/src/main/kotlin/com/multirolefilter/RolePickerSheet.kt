@@ -15,6 +15,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import com.aliucord.Utils
 import com.aliucord.utils.DimenUtils.dpToPx
@@ -127,7 +128,11 @@ class RolePickerSheet(
         if (shown.isEmpty()) {
             container.addView(
                 TextView(ctx).apply {
-                    text = if (roles.isEmpty()) "This server has no roles to pick from." else "No roles match “$query”."
+                    text = if (roles.isEmpty()) {
+                        "This server has no roles to pick from."
+                    } else {
+                        "No roles match “$query”."
+                    }
                     setTextColor(textMuted)
                     textSize = 14f
                     setPadding(dpToPx(4), dpToPx(12), dpToPx(4), dpToPx(12))
@@ -174,7 +179,7 @@ class RolePickerSheet(
 
     private fun updateApply() {
         val button = applyButton ?: return
-        val accent = ColorUtils.setAlphaComponent(androidx.core.content.ContextCompat.getColor(requireContext(), R.c.brand_new_330), 255)
+        val accent = ColorUtils.setAlphaComponent(ContextCompat.getColor(requireContext(), R.c.brand_new_330), 255)
         button.text = when (chosen.size) {
             0 -> "Done (no roles)"
             1 -> "Use 1 role"
