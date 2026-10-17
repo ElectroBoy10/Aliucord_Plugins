@@ -81,9 +81,6 @@ class TranslateMessagesPlusSettings(private val plugin: TranslateMessagesPlus) :
         action("Original plugin by yutaplug", "github.com/yutaplug/yutaplugins") {
             openUrl("https://github.com/yutaplug/yutaplugins")
         }
-        action("This plugin's source", "github.com/ElectroBoy10/Claude") {
-            openUrl("https://github.com/ElectroBoy10/Claude")
-        }
     }
 
     private fun openUrl(url: String) {
