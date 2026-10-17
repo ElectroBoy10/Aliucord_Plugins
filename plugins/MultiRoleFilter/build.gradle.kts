@@ -1,5 +1,11 @@
-version = "1.0.0"
+import com.android.build.gradle.LibraryExtension
+
+version = "1.0.0" // Plugin version. Increment this to trigger an update
 description = "Find server members by several roles at once with /rolefilter: members with all of the roles, or any of them. Based on RoleMembers by nyakowint."
+
+configure<LibraryExtension> {
+    namespace = "com.multirolefilter"
+}
 
 aliucord {
     changelog.set(
@@ -10,4 +16,7 @@ aliucord {
         * Based on RoleMembers by nyakowint (GLWTS license).
         """.trimIndent(),
     )
+
+    // Publish this plugin to the builds branch. Set to false if the plugin is unfinished.
+    deploy.set(true)
 }
