@@ -99,7 +99,7 @@ class RoleFilterPage(
         addView(label(ctx, "ROLES"))
         rolesBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         addView(rolesBox)
-        addView(
+        linearLayout.addView(
             button(ctx, "+  Add or remove roles") { openPicker() },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(6) },
         )
@@ -139,10 +139,10 @@ class RoleFilterPage(
             background = pill(cardBase, ColorUtils.setAlphaComponent(textMuted, 70))
             visibility = View.GONE
         }
-        addView(noticeView, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
+        linearLayout.addView(noticeView, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
 
         retryButton = button(ctx, "Try again") { retryFailed() }.apply { visibility = View.GONE }
-        addView(retryButton, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
+        linearLayout.addView(retryButton, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
 
         searchField = EditText(ctx).apply {
             hint = "Search these members"
@@ -167,13 +167,13 @@ class RoleFilterPage(
                 },
             )
         }
-        addView(searchField, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
+        linearLayout.addView(searchField, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpToPx(8) })
 
         listBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         addView(listBox)
 
         copyButton = button(ctx, "Copy this list of names") { copyNames() }.apply { visibility = View.GONE }
-        addView(copyButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(8) })
+        linearLayout.addView(copyButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpToPx(8) })
 
         refreshAll()
     }
