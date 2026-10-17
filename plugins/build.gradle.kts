@@ -17,7 +17,7 @@ subprojects {
     }
 
     configure<LibraryExtension> {
-        // namespace is set in each plugin's own build.gradle.kts
+        // Namespace is defined by each plugin.
         compileSdk = 36
 
         defaultConfig {
@@ -36,7 +36,7 @@ subprojects {
     }
 
     configure<AliucordExtension> {
-        author("Claude (Anthropic)", 0L, hyperlink = false)
+        author("Dillen Rudman", 0L, hyperlink = false)
 
         github("https://github.com/ElectroBoy10/Claude")
     }
