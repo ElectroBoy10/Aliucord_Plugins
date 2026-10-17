@@ -25,7 +25,19 @@ The original `yutaplug/yutaplugins` repository does not include a license file, 
 its author. This modified version is shared for personal use with credit. If the original author would like it
 changed or taken down, please open an issue.
 
+## MultiRoleFilter
+
+An [Aliucord](https://github.com/Aliucord/Aliucord) plugin that finds server members by several roles at once.
+`/rolefilter` takes 1 to 5 roles and shows the members who have all of them, or any of them. Each member is a card
+in the colour of their main role, with their other roles listed, and tapping a card opens their profile.
+
+### Credits
+
+- Based on the idea and the member-list approach of [RoleMembers](https://github.com/nyakowint/AliuPlugins/tree/main/RoleMembers)
+  by nyakowint, which is released under the GLWTS license.
+- Written with Claude Code (Claude by Anthropic).
+
 ### Building
 
-Pushing to `main` builds the plugin with GitHub Actions. The zip is attached to the `latest` release and also kept
+Pushing to `main` builds every plugin with GitHub Actions. The zip is attached to the `latest` release and also kept
 on the `builds` branch. To use it, copy the zip into Aliucord's `plugins` folder and restart Aliucord.
