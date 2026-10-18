@@ -27,12 +27,13 @@ Translations are kept in memory only while Aliucord is running.
 
 ## CustomMemberCategories [Beta]
 
-Add your own categories to the top of a server's member list. Each category is filled by the roles you pick, and shows the **online** members who have them.
+Add your own categories to the top of a server's member list. Each category is filled by the roles you pick, and shows the members who have them (online members by default, offline ones too if you turn that on).
 
 ### Features
 
 - Create as many categories as you like per server, each with its own name and roles (a category header shows the name and member count).
 - Choose whether a member needs **any** of the picked roles or **all** of them.
+- Optionally include **offline** members in a category (off by default).
 - Members are **copied** into your categories. They also stay in their normal place in Discord's list, so Discord's own headers and counts stay correct.
 - Reorder categories with the ▲ ▼ arrows. The order in the list is the order at the top of the member list.
 - Everything is local-only: only you see your categories, and nothing is sent to Discord or anyone else.
@@ -45,7 +46,7 @@ Add your own categories to the top of a server's member list. Each category is f
 
 ### Known limits
 
-- Only online members are shown, and only members Discord has already loaded into the member list. In large servers that means the part of the list you have scrolled to.
+- Only members Discord has already loaded into the member list can appear. In large servers that means the part of the list you have scrolled to, which matters most for offline members because Discord lists them last.
 - It is a Beta: if something looks wrong, turn on **Debug logging** in the plugin settings and send the Aliucord log with your report.
 
 ## Install

@@ -210,8 +210,8 @@ class CustomMemberCategories : Plugin() {
         val top = ArrayList<ChannelMembersListAdapter.Item>()
         val topIds = ArrayList<Long>()
         for (category in categories) {
-            val matching = members.filter { isOnline(it) && matches(category, guildId, it.userId) }
-            debug("Category \"${category.name}\" (${category.roleIds.size} roles, matchAll=${category.matchAll}): ${matching.size} matches")
+            val matching = members.filter { (category.includeOffline || isOnline(it)) && matches(category, guildId, it.userId) }
+            debug("Category \"${category.name}\" (${category.roleIds.size} roles, matchAll=${category.matchAll}, includeOffline=${category.includeOffline}): ${matching.size} matches")
             if (matching.isEmpty()) continue
             top.add(makeHeader(category, matching.size))
             topIds.add(idFor("header:${category.id}"))
