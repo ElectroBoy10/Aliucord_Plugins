@@ -251,6 +251,8 @@ class CategoryPage(
     }
 }
 
+private class GuildRow(val id: Long, val name: String, val count: Int)
+
 /** The plugin's main settings page: pick a server to manage its categories, plus a few options. */
 class MainSettingsPage(
     private val plugin: CustomMemberCategories,
@@ -306,8 +308,16 @@ class MainSettingsPage(
         box.removeAllViews()
         val ctx = requireContext()
         val guilds = StoreStream.getGuilds().guilds.values
-            .map { Triple(it.id, it.name.toString(), plugin.categories(it.id).size) }
-            .sortedWith(compareByDescending<Triple<Long, String, Int>> { it.third > 0 }.thenBy { it.second.lowercase() })
+            .map { GuildRow(it.id, it.name.toString(), plugin.categories(it.id).size) }
+            .sortedWith(
+                Comparator { a, b ->
+                    if ((a.count > 0) != (b.count > 0)) {
+                        if (a.count > 0) -1 else 1
+                    } else {
+                        a.name.compareTo(b.name, ignoreCase = true)
+                    }
+                },
+            )
         if (guilds.isEmpty()) {
             box.addView(
                 TextView(ctx, null, 0, R.i.UiKit_Settings_Item_SubText).apply { text = "No servers found." },
@@ -315,14 +325,16 @@ class MainSettingsPage(
             )
             return
         }
-        for ((id, name, count) in guilds) {
+        for (guild in guilds) {
+            val id = guild.id
+            val count = guild.count
             val summary = when (count) {
                 0 -> "No categories yet"
                 1 -> "1 category"
                 else -> "$count categories"
             }
             box.addView(
-                settingsRow(ctx, name, summary) {
+                settingsRow(ctx, guild.name, summary) {
                     Utils.openPageWithProxy(requireContext(), CategoriesPage(plugin, id))
                 },
                 LinearLayout.LayoutParams(-1, -2),
