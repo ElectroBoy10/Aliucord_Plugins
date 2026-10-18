@@ -33,7 +33,7 @@ The zip is written to `plugins/TranslateMessagesPlus/build/outputs/TranslateMess
 
 ## Credits and licensing
 
-TranslateMessagesPlus is based on [TranslateMessages v1.0.2](https://github.com/yutaplug/yutaplugins/tree/main/plugins/TranslateMessages) by [yutaplug](https://github.com/yutaplug). The original project has no license file, so its code remains the original author's property. This modified version is shared for personal use with attribution.
+TranslateMessagesPlus is based on [TranslateMessages v1.0.2](https://github.com/yutaplug/yutaplugins/tree/main/plugins/TranslateMessages) by [yutaplug](https://github.com/yutaplug). The original project has no license file, so its code remains the original author's property. I have received premmision from the original owner to use/modify/publish my own version of his plugin [here](https://github.com/yutaplug/yutaplugins/issues/4)
 
 The added features include per-chat auto-translation, translated replies, and a configurable translated-message label colour.
 
