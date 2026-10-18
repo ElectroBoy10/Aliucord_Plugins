@@ -37,8 +37,30 @@ class CustomMemberCategories : Plugin() {
     @Volatile
     private var lastOriginal: WidgetChannelMembersListViewModel.MemberList? = null
 
+    init {
+        settingsTab = SettingsTab(MainSettingsPage::class.java, SettingsTab.Type.PAGE).withArgs(this)
+    }
+
+    var debugLogging: Boolean
+        get() = settings.getBool(KEY_DEBUG, false)
+        set(value) = settings.setBool(KEY_DEBUG, value)
+
+    private fun debug(message: String) {
+        if (debugLogging) logger.info(message)
+    }
+
     fun categories(guildId: Long): MutableList<Category> = cache.getOrPut(guildId) {
         Category.parseList(settings.getString("categories_$guildId", "[]") ?: "[]")
+    }
+
+    /** Moves a category up (-1) or down (+1). The order of the list is the order shown in the member list. */
+    fun moveCategory(guildId: Long, categoryId: String, delta: Int) {
+        val list = categories(guildId)
+        val from = list.indexOfFirst { it.id == categoryId }
+        val to = from + delta
+        if (from < 0 || to < 0 || to >= list.size) return
+        java.util.Collections.swap(list, from, to)
+        save(guildId)
     }
 
     fun save(guildId: Long) {
@@ -167,19 +189,19 @@ class CustomMemberCategories : Plugin() {
         val list = List(original.size) { original.get(it) }
         val guildId = StoreStream.getGuildSelected().selectedGuildId
         if (guildId <= 0L) {
-            logger.info("Skipping: no guild selected (guildId=$guildId)")
+            debug("Skipping: no guild selected (guildId=$guildId)")
             return null
         }
         val categories = categories(guildId).filter { it.roleIds.isNotEmpty() }
         if (categories.isEmpty()) {
-            logger.info("Skipping: guild $guildId has no categories with roles")
+            debug("Skipping: guild $guildId has no categories with roles")
             return null
         }
 
         val members = list.filterIsInstance<ChannelMembersListAdapter.Item.Member>()
         val online = members.count { isOnline(it) }
         val noGuildMember = members.count { StoreStream.getGuilds().getMember(guildId, it.userId) == null }
-        logger.info(
+        debug(
             "Guild $guildId: ${categories.size} categories, list has ${list.size} rows, " +
                 "${members.size} members, $online online, $noGuildMember without guild member data",
         )
@@ -189,7 +211,7 @@ class CustomMemberCategories : Plugin() {
         val topIds = ArrayList<Long>()
         for (category in categories) {
             val matching = members.filter { isOnline(it) && matches(category, guildId, it.userId) }
-            logger.info("Category \"${category.name}\" (${category.roleIds.size} roles, matchAll=${category.matchAll}): ${matching.size} matches")
+            debug("Category \"${category.name}\" (${category.roleIds.size} roles, matchAll=${category.matchAll}): ${matching.size} matches")
             if (matching.isEmpty()) continue
             top.add(makeHeader(category, matching.size))
             topIds.add(idFor("header:${category.id}"))
@@ -274,5 +296,6 @@ class CustomMemberCategories : Plugin() {
 
     private companion object {
         const val KEY_PREFIX = "custom-category-"
+        const val KEY_DEBUG = "debug_logging"
     }
 }

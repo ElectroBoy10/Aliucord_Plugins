@@ -1,6 +1,7 @@
 package com.custommembercategories
 
 import android.annotation.SuppressLint
+import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -15,6 +16,22 @@ import com.lytefast.flexinput.R
 
 private fun serverName(guildId: Long): String =
     StoreStream.getGuilds().getGuild(guildId)?.name ?: "This server"
+
+/** A tappable settings row with a title and a smaller line under it. */
+private fun settingsRow(ctx: android.content.Context, title: String, subtitle: String, onClick: () -> Unit): View =
+    LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        isFocusable = true
+        setOnClickListener { onClick() }
+        addView(
+            TextView(ctx, null, 0, R.i.UiKit_Settings_Item_Label).apply { text = title },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+        addView(
+            TextView(ctx, null, 0, R.i.UiKit_Settings_Item_SubText).apply { text = subtitle },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+    }
 
 /** Lists the categories of one server. Opened with the /categories command. */
 class CategoriesPage(
@@ -49,21 +66,16 @@ class CategoriesPage(
         val categories = plugin.categories(guildId)
 
         box.addView(
-            row("Add category", "Only you see these. They sit at the top of this server's member list.") { askName() },
+            settingsRow(requireContext(), "Add category", "Only you see these. They sit at the top of this server's member list, in the order below. Use the arrows to reorder.") { askName() },
             LinearLayout.LayoutParams(-1, -2),
         )
-        for (category in categories) {
+        for ((index, category) in categories.withIndex()) {
             val mode = if (category.matchAll) "all of" else "any of"
             val summary = when (category.roleIds.size) {
                 0 -> "No roles picked yet"
                 else -> "Online members with $mode ${category.roleIds.size} role(s)"
             }
-            box.addView(
-                row(category.name, summary) {
-                    Utils.openPageWithProxy(requireContext(), CategoryPage(plugin, guildId, category.id))
-                },
-                LinearLayout.LayoutParams(-1, -2),
-            )
+            box.addView(categoryRow(category, index, categories.size - 1, summary), LinearLayout.LayoutParams(-1, -2))
         }
     }
 
@@ -87,20 +99,36 @@ class CategoriesPage(
         dialog.show(parentFragmentManager, "CustomCategoryName")
     }
 
-    private fun row(title: String, subtitle: String, onClick: () -> Unit): View {
+    private fun categoryRow(category: Category, index: Int, last: Int, summary: String): View {
         val ctx = requireContext()
+        val pad = (14 * ctx.resources.displayMetrics.density).toInt()
+
+        fun arrow(symbol: String, enabled: Boolean, delta: Int) =
+            TextView(ctx, null, 0, R.i.UiKit_Settings_Item_Label).apply {
+                text = symbol
+                gravity = Gravity.CENTER
+                setPadding(pad, 0, pad, 0)
+                alpha = if (enabled) 1f else 0.25f
+                if (enabled) {
+                    isFocusable = true
+                    setOnClickListener {
+                        plugin.moveCategory(guildId, category.id, delta)
+                        render()
+                    }
+                }
+            }
+
         return LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            isFocusable = true
-            setOnClickListener { onClick() }
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             addView(
-                TextView(ctx, null, 0, R.i.UiKit_Settings_Item_Label).apply { text = title },
-                LinearLayout.LayoutParams(-1, -2),
+                settingsRow(ctx, category.name, summary) {
+                    Utils.openPageWithProxy(requireContext(), CategoryPage(plugin, guildId, category.id))
+                },
+                LinearLayout.LayoutParams(0, -2, 1f),
             )
-            addView(
-                TextView(ctx, null, 0, R.i.UiKit_Settings_Item_SubText).apply { text = subtitle },
-                LinearLayout.LayoutParams(-1, -2),
-            )
+            addView(arrow("\u25B2", index > 0, -1), LinearLayout.LayoutParams(-2, -1))
+            addView(arrow("\u25BC", index < last, 1), LinearLayout.LayoutParams(-2, -1))
         }
     }
 }
@@ -220,5 +248,85 @@ class CategoryPage(
             requireActivity().onBackPressed()
         }
         dialog.show(parentFragmentManager, "CustomCategoryDelete")
+    }
+}
+
+/** The plugin's main settings page: pick a server to manage its categories, plus a few options. */
+class MainSettingsPage(
+    private val plugin: CustomMemberCategories,
+) : SettingsPage() {
+    private var container: LinearLayout? = null
+
+    override fun onViewBound(view: View) {
+        super.onViewBound(view)
+        setActionBarTitle("Member categories [Beta]")
+        setActionBarSubtitle("Settings")
+        val ctx = requireContext()
+
+        addHeader(ctx, "Servers")
+        linearLayout.addView(
+            TextView(ctx, null, 0, R.i.UiKit_Settings_Item_SubText).apply {
+                text = "Pick a server to add, edit or reorder its categories. They are saved on this device only, " +
+                    "and you can also open a server's categories with /categories."
+            },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+        container = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        linearLayout.addView(container, LinearLayout.LayoutParams(-1, -2))
+
+        addDivider(ctx)
+        addHeader(ctx, "Troubleshooting")
+        linearLayout.addView(
+            Utils.createCheckedSetting(
+                ctx,
+                CheckedSetting.ViewType.SWITCH,
+                "Debug logging",
+                "Writes what the plugin sees on every member list update to Aliucord's log. Turn on when reporting a bug.",
+            ).apply {
+                isChecked = plugin.debugLogging
+                setOnCheckedListener { plugin.debugLogging = it }
+            },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+        render()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        render()
+    }
+
+    override fun onDestroyView() {
+        container = null
+        super.onDestroyView()
+    }
+
+    private fun render() {
+        val box = container ?: return
+        box.removeAllViews()
+        val ctx = requireContext()
+        val guilds = StoreStream.getGuilds().guilds.values
+            .map { Triple(it.id, it.name.toString(), plugin.categories(it.id).size) }
+            .sortedWith(compareByDescending<Triple<Long, String, Int>> { it.third > 0 }.thenBy { it.second.lowercase() })
+        if (guilds.isEmpty()) {
+            box.addView(
+                TextView(ctx, null, 0, R.i.UiKit_Settings_Item_SubText).apply { text = "No servers found." },
+                LinearLayout.LayoutParams(-1, -2),
+            )
+            return
+        }
+        for ((id, name, count) in guilds) {
+            val summary = when (count) {
+                0 -> "No categories yet"
+                1 -> "1 category"
+                else -> "$count categories"
+            }
+            box.addView(
+                settingsRow(ctx, name, summary) {
+                    Utils.openPageWithProxy(requireContext(), CategoriesPage(plugin, id))
+                },
+                LinearLayout.LayoutParams(-1, -2),
+            )
+        }
     }
 }
