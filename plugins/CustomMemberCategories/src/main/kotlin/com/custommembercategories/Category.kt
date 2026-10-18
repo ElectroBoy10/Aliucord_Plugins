@@ -21,7 +21,11 @@ class Category(
         fun fromJson(obj: JSONObject): Category {
             val roles = mutableListOf<Long>()
             obj.optJSONArray("roles")?.let { array ->
-                for (i in 0 until array.length()) roles.add(array.getLong(i))
+                var i = 0
+                while (i < array.length()) {
+                    roles.add(array.getLong(i))
+                    i++
+                }
             }
             return Category(
                 id = obj.getString("id"),
@@ -35,7 +39,11 @@ class Category(
             val result = mutableListOf<Category>()
             try {
                 val array = JSONArray(json)
-                for (i in 0 until array.length()) result.add(fromJson(array.getJSONObject(i)))
+                var i = 0
+                while (i < array.length()) {
+                    result.add(fromJson(array.getJSONObject(i)))
+                    i++
+                }
             } catch (_: Throwable) {
                 // Corrupt or empty data: start with no categories.
             }

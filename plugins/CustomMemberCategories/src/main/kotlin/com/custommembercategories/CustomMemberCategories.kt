@@ -201,13 +201,16 @@ class CustomMemberCategories : Plugin() {
         override fun get(index: Int): ChannelMembersListAdapter.Item = rows[index]
 
         override fun getHeaderPositionForItem(itemPosition: Int): Int? {
-            if (itemPosition !in rows.indices) return null
-            for (index in itemPosition downTo 0) {
+            // Plain while loop on purpose: `downTo` needs a newer Kotlin stdlib than Discord ships (crashes at runtime).
+            if (itemPosition < 0 || itemPosition >= rows.size) return null
+            var index = itemPosition
+            while (index >= 0) {
                 val item = rows[index]
                 if (item is ChannelMembersListAdapter.Item.Header ||
                     item is ChannelMembersListAdapter.Item.RoleHeader) {
                     return index
                 }
+                index--
             }
             return null
         }
