@@ -38,7 +38,7 @@ subprojects {
     configure<AliucordExtension> {
         author("Dillen Rudman", 0L, hyperlink = false)
 
-        github("https://github.com/ElectroBoy10/Claude")
+        github("https://github.com/ElectroBoy10/Aliucord_Plugins")
     }
 
     configure<KtlintExtension> {

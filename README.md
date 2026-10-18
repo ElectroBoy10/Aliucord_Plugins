@@ -14,6 +14,8 @@ An [Aliucord](https://github.com/Aliucord/Aliucord) plugin for translating Disco
 
 Translations are kept in memory only while Aliucord is running.
 
+**Privacy:** automatic translation sends eligible message text to the translation service you select. Google Translate is used by default; you can instead choose DeepL or your own LibreTranslate server.
+
 ## Install
 
 1. Open this repository's [`builds`](../../tree/builds) branch after a successful GitHub build.
