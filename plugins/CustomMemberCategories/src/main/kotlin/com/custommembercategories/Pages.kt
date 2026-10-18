@@ -25,7 +25,7 @@ class CategoriesPage(
 
     override fun onViewBound(view: View) {
         super.onViewBound(view)
-        setActionBarTitle("Member categories")
+        setActionBarTitle("Member categories [Beta]")
         setActionBarSubtitle(serverName(guildId))
         container = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
         linearLayout.addView(container, LinearLayout.LayoutParams(-1, -2))
@@ -117,11 +117,11 @@ class CategoryPage(
         super.onViewBound(view)
         val category = category()
         if (category == null) {
-            setActionBarTitle("Category")
+            setActionBarTitle("Category [Beta]")
             return
         }
         setActionBarTitle(category.name)
-        setActionBarSubtitle(serverName(guildId))
+        setActionBarSubtitle("${serverName(guildId)} [Beta]")
         val ctx = requireContext()
 
         linearLayout.addView(

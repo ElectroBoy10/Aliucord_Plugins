@@ -41,7 +41,7 @@ class CustomMemberCategories : Plugin() {
     override fun start(context: Context) {
         hookAdapter()
         hookHeader()
-        commands.registerCommand("categories", "Manage your custom member list categories for this server") {
+        commands.registerCommand("categories", "[Beta] Manage your custom member list categories for this server") {
             val guildId = it.currentChannel.guildId
             if (guildId <= 0L) {
                 return@registerCommand CommandsAPI.CommandResult("Run this in a server channel.", null, false)
