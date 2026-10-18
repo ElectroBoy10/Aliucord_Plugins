@@ -13,13 +13,21 @@ import com.discord.widgets.channels.memberlist.adapter.ChannelMembersListAdapter
 import com.discord.widgets.channels.memberlist.adapter.ChannelMembersListViewHolderHeader
 import de.robv.android.xposed.XC_MethodHook
 import java.lang.ref.WeakReference
+import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 @AliucordPlugin
 class CustomMemberCategories : Plugin() {
     private val cache = ConcurrentHashMap<Long, MutableList<Category>>()
     private val headerInfo = ConcurrentHashMap<String, Pair<String, Int>>()
+
+    // Stable row ids for our own rows. Real ids are positive (user/role ids) or tiny negatives (-1..-5),
+    // so we hand out unique, very negative numbers that can never collide with them.
+    private val customIds = ConcurrentHashMap<String, Long>()
+    private val idCounter = AtomicLong(-1_000_000_000L)
+    private var memberListField: Field? = null
 
     private var adapterRef: WeakReference<ChannelMembersListAdapter>? = null
     private var setDataMethod: Method? = null
@@ -39,8 +47,10 @@ class CustomMemberCategories : Plugin() {
     }
 
     override fun start(context: Context) {
+        logger.info("Starting CustomMemberCategories")
         hookAdapter()
         hookHeader()
+        hookItemIds()
         commands.registerCommand("categories", "[Beta] Manage your custom member list categories for this server") {
             val guildId = it.currentChannel.guildId
             if (guildId <= 0L) {
@@ -55,6 +65,7 @@ class CustomMemberCategories : Plugin() {
         patcher.unpatchAll()
         commands.unregisterAll()
         headerInfo.clear()
+        customIds.clear()
     }
 
     private fun hookAdapter() {
@@ -91,6 +102,30 @@ class CustomMemberCategories : Plugin() {
                 Utils.getResId("channel_members_list_item_header_text", "id"),
             ) ?: return@after
             textView.text = "${info.first} — ${info.second}"
+        }
+    }
+
+    private fun idFor(key: String): Long = customIds.getOrPut(key) { idCounter.getAndDecrement() }
+
+    private fun adapterMemberList(adapter: ChannelMembersListAdapter): WidgetChannelMembersListViewModel.MemberList? {
+        var field = memberListField
+        if (field == null) {
+            field = generateSequence<Class<*>>(adapter.javaClass) { it.superclass }
+                .flatMap { it.declaredFields.asSequence() }
+                .firstOrNull { WidgetChannelMembersListViewModel.MemberList::class.java.isAssignableFrom(it.type) }
+                ?.also { it.isAccessible = true }
+            memberListField = field
+        }
+        return field?.get(adapter) as? WidgetChannelMembersListViewModel.MemberList
+    }
+
+    // Discord uses stable ids, so two rows with the same id would glitch. Our copies get their own ids.
+    private fun hookItemIds() {
+        patcher.after<ChannelMembersListAdapter>("getItemId", Int::class.java) { param ->
+            val position = param.args[0] as? Int ?: return@after
+            val list = adapterMemberList(this) as? CustomMemberList ?: return@after
+            val id = list.customIdAt(position) ?: return@after
+            param.result = id
         }
     }
 
@@ -131,31 +166,44 @@ class CustomMemberCategories : Plugin() {
     private fun transform(original: WidgetChannelMembersListViewModel.MemberList): WidgetChannelMembersListViewModel.MemberList? {
         val list = List(original.size) { original.get(it) }
         val guildId = StoreStream.getGuildSelected().selectedGuildId
-        if (guildId <= 0L) return null
+        if (guildId <= 0L) {
+            logger.info("Skipping: no guild selected (guildId=$guildId)")
+            return null
+        }
         val categories = categories(guildId).filter { it.roleIds.isNotEmpty() }
-        if (categories.isEmpty()) return null
+        if (categories.isEmpty()) {
+            logger.info("Skipping: guild $guildId has no categories with roles")
+            return null
+        }
 
         val members = list.filterIsInstance<ChannelMembersListAdapter.Item.Member>()
-        val moved = HashSet<Long>()
+        val online = members.count { isOnline(it) }
+        val noGuildMember = members.count { StoreStream.getGuilds().getMember(guildId, it.userId) == null }
+        logger.info(
+            "Guild $guildId: ${categories.size} categories, list has ${list.size} rows, " +
+                "${members.size} members, $online online, $noGuildMember without guild member data",
+        )
+
+        // Members stay where they are; matching online members are copied into the categories at the top.
         val top = ArrayList<ChannelMembersListAdapter.Item>()
+        val topIds = ArrayList<Long>()
         for (category in categories) {
-            val matching = members.filter {
-                it.userId !in moved && isOnline(it) && matches(category, guildId, it.userId)
-            }
+            val matching = members.filter { isOnline(it) && matches(category, guildId, it.userId) }
+            logger.info("Category \"${category.name}\" (${category.roleIds.size} roles, matchAll=${category.matchAll}): ${matching.size} matches")
             if (matching.isEmpty()) continue
-            matching.forEach { moved.add(it.userId) }
             top.add(makeHeader(category, matching.size))
-            top.addAll(matching)
+            topIds.add(idFor("header:${category.id}"))
+            for (member in matching) {
+                top.add(member)
+                topIds.add(idFor("member:${category.id}:${member.userId}"))
+            }
         }
         if (top.isEmpty()) return null
 
         val result = ArrayList<ChannelMembersListAdapter.Item>(list.size + top.size)
         result.addAll(top)
-        for (item in list) {
-            if (item is ChannelMembersListAdapter.Item.Member && item.userId in moved) continue
-            result.add(item)
-        }
-        return CustomMemberList(original.listId, result)
+        result.addAll(list)
+        return CustomMemberList(original.listId, result, topIds.toLongArray())
     }
 
     private fun isOnline(member: ChannelMembersListAdapter.Item.Member): Boolean {
@@ -197,7 +245,11 @@ class CustomMemberCategories : Plugin() {
     private class CustomMemberList(
         private val sourceListId: String,
         private val rows: List<ChannelMembersListAdapter.Item>,
+        private val customIds: LongArray,
     ) : WidgetChannelMembersListViewModel.MemberList {
+        /** Unique id for the rows we added at the top (headers and member copies), null for Discord's own rows. */
+        fun customIdAt(position: Int): Long? = if (position >= 0 && position < customIds.size) customIds[position] else null
+
         override fun get(index: Int): ChannelMembersListAdapter.Item = rows[index]
 
         override fun getHeaderPositionForItem(itemPosition: Int): Int? {
