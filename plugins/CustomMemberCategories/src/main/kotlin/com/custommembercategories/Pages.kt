@@ -73,7 +73,7 @@ class CategoriesPage(
             val mode = if (category.matchAll) "all of" else "any of"
             val summary = when (category.roleIds.size) {
                 0 -> "No roles picked yet"
-                else -> "${if (category.includeOffline) "Online and offline" else "Online"} members with $mode ${category.roleIds.size} role(s)"
+                else -> "Online members with $mode ${category.roleIds.size} role(s)"
             }
             box.addView(categoryRow(category, index, categories.size - 1, summary), LinearLayout.LayoutParams(-1, -2))
         }
@@ -162,22 +162,6 @@ class CategoryPage(
                 isChecked = category.matchAll
                 setOnCheckedListener {
                     category.matchAll = it
-                    plugin.save(guildId)
-                }
-            },
-            LinearLayout.LayoutParams(-1, -2),
-        )
-
-        linearLayout.addView(
-            Utils.createCheckedSetting(
-                ctx,
-                CheckedSetting.ViewType.SWITCH,
-                "Include offline members",
-                "Off: only online members. On: offline members are shown too, if Discord has loaded them into the member list.",
-            ).apply {
-                isChecked = category.includeOffline
-                setOnCheckedListener {
-                    category.includeOffline = it
                     plugin.save(guildId)
                 }
             },
